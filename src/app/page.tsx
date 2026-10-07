@@ -7,15 +7,7 @@ import { trackEvent } from "@/lib/analytics";
 import { API_BASE_URL } from "@/lib/api-config";
 import {
   Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
+  registerables,
   ChartOptions,
   TooltipItem,
   ChartData,
@@ -23,17 +15,7 @@ import {
 import { Chart } from "react-chartjs-2";
 import CgpaPlannerPortal from "./CgpaPlannerPortal";
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-);
+ChartJS.register(...registerables);
 
 interface SpeechRecognitionEventLike {
   resultIndex: number;
@@ -344,7 +326,7 @@ const DEFAULT_SUBJECTS: Subject[] = [
 const getUserStorageKey = (u: UserProfile | null, key: string) => {
   if (!u) return `digital_twin_${key}_guest`;
   const provider = u.authProvider || 'user';
-  const id = u.email || u.phone || u.firstName || 'default';
+  const id = u.email || u.phone || u.firstName || u.fullName || 'default';
   const cleanId = `${provider}_${id}`.toLowerCase().replace(/[^a-z0-9]/g, '_');
   return `digital_twin_${cleanId}_${key}`;
 };
@@ -2857,50 +2839,54 @@ export default function Dashboard() {
 
   useEffect(() => {
     setIsClient(true);
-    const storedUser = localStorage.getItem('digital_twin_user');
     let currentUser: UserProfile | null = null;
-    if (storedUser) {
-      try {
-        currentUser = JSON.parse(storedUser);
-        setUser(currentUser);
-        // If stored user has not completed student profile (name, college, age), prompt immediately
-        if (!currentUser?.profileCompleted || !currentUser?.college || !currentUser?.fullName) {
-          setEditProfileName(currentUser?.fullName || currentUser?.firstName || '');
-          setEditProfileCollege(currentUser?.college || '');
-          setEditProfileAge(String(currentUser?.age || '20'));
-          setIsMandatoryProfileSetup(true);
-          setShowEditProfileModal(true);
+    try {
+      const storedUser = typeof window !== 'undefined' ? localStorage.getItem('digital_twin_user') : null;
+      if (storedUser) {
+        try {
+          currentUser = JSON.parse(storedUser);
+          setUser(currentUser);
+          // If stored user has not completed student profile (name, college, age), prompt immediately
+          if (!currentUser?.profileCompleted || !currentUser?.college || (!currentUser?.fullName && !currentUser?.firstName)) {
+            setEditProfileName(currentUser?.fullName || currentUser?.firstName || '');
+            setEditProfileCollege(currentUser?.college || '');
+            setEditProfileAge(String(currentUser?.age || '20'));
+            setIsMandatoryProfileSetup(true);
+            setShowEditProfileModal(true);
+          }
+        } catch {
+          setUser(null);
         }
-      } catch {
+      } else {
         setUser(null);
       }
-    } else {
-      setUser(null);
-    }
 
-    const storageKey = getUserStorageKey(currentUser, 'subjects');
-    const storedSubjects = localStorage.getItem(storageKey);
-    if (storedSubjects) {
-      try {
-        const parsed = JSON.parse(storedSubjects);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setSubjects(parsed);
-          const activeKey = getUserStorageKey(currentUser, 'active_subject_id');
-          const storedActiveId = localStorage.getItem(activeKey);
-          if (storedActiveId && parsed.some((s: Subject) => s.id === storedActiveId)) {
-            setActiveSubjectId(storedActiveId);
-          } else {
-            setActiveSubjectId(parsed[0].id);
+      const storageKey = getUserStorageKey(currentUser, 'subjects');
+      const storedSubjects = typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null;
+      if (storedSubjects) {
+        try {
+          const parsed = JSON.parse(storedSubjects);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setSubjects(parsed);
+            const activeKey = getUserStorageKey(currentUser, 'active_subject_id');
+            const storedActiveId = typeof window !== 'undefined' ? localStorage.getItem(activeKey) : null;
+            if (storedActiveId && parsed.some((s: Subject) => s.id === storedActiveId)) {
+              setActiveSubjectId(storedActiveId);
+            } else {
+              setActiveSubjectId(parsed[0].id);
+            }
           }
+        } catch (err) {
+          console.warn("Could not load stored subjects:", err);
         }
-      } catch (err) {
-        console.warn("Could not load stored subjects:", err);
       }
-    }
 
-    // Also pull cloud persistence if user is logged in
-    if (currentUser) {
-      fetchCloudTelemetry(currentUser);
+      // Also pull cloud persistence if user is logged in
+      if (currentUser) {
+        fetchCloudTelemetry(currentUser);
+      }
+    } catch (hydrateErr) {
+      console.warn("Error during client state hydration:", hydrateErr);
     }
   }, []);
 
@@ -3846,7 +3832,7 @@ export default function Dashboard() {
               ) : user?.authProvider === 'guest' ? (
                 <i className="fa-solid fa-user-astronaut" style={{ fontSize: "0.85rem", color: "var(--accent-cyan)" }}></i>
               ) : (
-                user ? user.firstName.substring(0, 2).toUpperCase() : "ST"
+                (user?.firstName || user?.fullName || "ST").substring(0, 2).toUpperCase()
               )}
             </div>
             <div style={{ display: "flex", flexDirection: "column" }} className="user-profile-meta">
@@ -3911,7 +3897,7 @@ export default function Dashboard() {
                   ) : user?.authProvider === 'guest' ? (
                     <i className="fa-solid fa-user-astronaut"></i>
                   ) : (
-                    user?.firstName?.substring(0, 2).toUpperCase() || 'ST'
+                    (user?.firstName || user?.fullName || 'ST').substring(0, 2).toUpperCase()
                   )}
                 </div>
                 <div>

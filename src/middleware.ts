@@ -5,8 +5,9 @@ export function middleware(request: NextRequest) {
   const { headers, nextUrl } = request;
   const proto = headers.get('x-forwarded-proto');
 
-  // Enforce HTTPS redirection in production when arriving via HTTP
-  if (process.env.NODE_ENV === 'production' && proto === 'http') {
+  // Enforce HTTPS redirection in production when arriving via HTTP (excluding localhost)
+  const isLocal = nextUrl.hostname === 'localhost' || nextUrl.hostname === '127.0.0.1';
+  if (process.env.NODE_ENV === 'production' && proto === 'http' && !isLocal) {
     const httpsUrl = nextUrl.clone();
     httpsUrl.protocol = 'https:';
     return NextResponse.redirect(httpsUrl, {
@@ -18,11 +19,13 @@ export function middleware(request: NextRequest) {
   }
 
   const response = NextResponse.next();
-  // Ensure HSTS is present on all responses
-  response.headers.set(
-    'Strict-Transport-Security',
-    'max-age=63072000; includeSubDomains; preload'
-  );
+  // Ensure HSTS is present on public production responses
+  if (!isLocal) {
+    response.headers.set(
+      'Strict-Transport-Security',
+      'max-age=63072000; includeSubDomains; preload'
+    );
+  }
   return response;
 }
 
