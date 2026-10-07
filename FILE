@@ -1,0 +1,12 @@
+# 1. Open the digital-twin directory
+cd "/Users/amayvikramsingh/amay gravity/digital-twin"
+
+# 2. Initialize a dedicated git repo (if creating a standalone repo)
+git init
+git add .
+git commit -m "feat: initial commit for Student AI Digital Twin"
+
+# 3. Link your new GitHub repository & push
+git branch -M main
+git remote add origin https://github.com/singhamayvikram08-droid/student-digital-twin.git
+git push -u origin main
