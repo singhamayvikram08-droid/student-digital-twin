@@ -78,6 +78,7 @@ export default function CookieConsentBanner() {
 
   return (
     <aside
+      className="cookie-consent-banner"
       aria-label="Privacy and Cookie Consent"
       role="region"
       style={{

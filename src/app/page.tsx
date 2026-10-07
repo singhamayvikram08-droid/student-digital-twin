@@ -551,6 +551,13 @@ export default function Dashboard() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [activePage, setActivePage] = useState<'portal' | 'analytics' | 'cgpa'>('portal');
 
+  // Automatically scroll to top when switching navigation tabs
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.scrollTo(0, 0);
+    }
+  }, [activePage]);
+
   // Modern Auth State
   const [authTab, setAuthTab] = useState<'email' | 'phone'>('email');
   const [emailInput, setEmailInput] = useState("");
@@ -3771,7 +3778,7 @@ export default function Dashboard() {
 
           {/* AI Chat Bot Quick Trigger */}
           <button
-            className={`btn-icon ${chatOpen ? 'active' : ''}`}
+            className={`btn-icon btn-header-quick-trigger ${chatOpen ? 'active' : ''}`}
             style={{
               color: chatOpen ? "var(--accent-cyan)" : "var(--text-secondary)",
               background: chatOpen ? "rgba(6, 182, 212, 0.15)" : undefined,
@@ -3791,7 +3798,7 @@ export default function Dashboard() {
           </button>
           {/* AI Consultant Live Quick Trigger */}
           <button
-            className={`btn-icon ${videoCallOpen ? 'active' : ''}`}
+            className={`btn-icon btn-header-quick-trigger ${videoCallOpen ? 'active' : ''}`}
             style={{
               color: videoCallOpen ? "var(--status-success)" : "var(--accent-primary)",
               background: videoCallOpen ? "rgba(16, 185, 129, 0.15)" : undefined,
@@ -5387,7 +5394,7 @@ export default function Dashboard() {
       )}
 
       {/* UNIFIED DOCKED FLOATING AI COMMAND BAR */}
-      <div className="chat-wrapper">
+      <div className={`chat-wrapper ${chatOpen ? 'chat-open' : ''}`}>
         {/* CHAT PANEL */}
         <div className={`chat-panel ${chatOpen ? '' : 'hidden'}`}>
           <div className="chat-header">
@@ -5431,10 +5438,11 @@ export default function Dashboard() {
                 <i className="fa-solid fa-headset"></i>
               </button>
               <button
-                className="btn-icon"
+                className="btn-icon chat-close-btn"
                 style={{ width: "28px", height: "28px" }}
                 onClick={() => setChatOpen(false)}
-                title="Minimize Chat"
+                title="Close Chat"
+                aria-label="Close Chat"
               >
                 <i className="fa-solid fa-xmark"></i>
               </button>
