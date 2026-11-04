@@ -7,15 +7,7 @@ import { trackEvent } from "@/lib/analytics";
 import { API_BASE_URL } from "@/lib/api-config";
 import {
   Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
+  registerables,
   ChartOptions,
   TooltipItem,
   ChartData,
@@ -24,17 +16,7 @@ import { Chart } from "react-chartjs-2";
 import CgpaPlannerPortal from "./CgpaPlannerPortal";
 import VitalAiPortal from "./VitalAiPortal";
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-);
+ChartJS.register(...registerables);
 
 interface SpeechRecognitionEventLike {
   resultIndex: number;
