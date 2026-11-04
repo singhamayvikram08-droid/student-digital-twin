@@ -1,4 +1,30 @@
 {
-  "framework": "nextjs",
-  "buildCommand": "next build --webpack"
+  "services": {
+    "student-digital-twin": {
+      "root": ".",
+      "framework": "nextjs",
+      "buildCommand": "next build --webpack"
+    },
+    "student-digital-twin-api": {
+      "root": "ai-service",
+      "entrypoint": "main:app",
+      "buildCommand": "pip install -r requirements.txt"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/student-digital-twin-api(/.*)?",
+      "destination": {
+        "type": "service",
+        "service": "student-digital-twin-api"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "type": "service",
+        "service": "student-digital-twin"
+      }
+    }
+  ]
 }
