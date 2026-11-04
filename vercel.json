@@ -13,6 +13,62 @@
   },
   "rewrites": [
     {
+      "source": "/predict/(.*)",
+      "destination": {
+        "type": "service",
+        "service": "student-digital-twin-api"
+      }
+    },
+    {
+      "source": "/chat",
+      "destination": {
+        "type": "service",
+        "service": "student-digital-twin-api"
+      }
+    },
+    {
+      "source": "/classify-emotion",
+      "destination": {
+        "type": "service",
+        "service": "student-digital-twin-api"
+      }
+    },
+    {
+      "source": "/analyze-frame",
+      "destination": {
+        "type": "service",
+        "service": "student-digital-twin-api"
+      }
+    },
+    {
+      "source": "/api/user/(.*)",
+      "destination": {
+        "type": "service",
+        "service": "student-digital-twin-api"
+      }
+    },
+    {
+      "source": "/api/cgpa/(.*)",
+      "destination": {
+        "type": "service",
+        "service": "student-digital-twin-api"
+      }
+    },
+    {
+      "source": "/api/face/(.*)",
+      "destination": {
+        "type": "service",
+        "service": "student-digital-twin-api"
+      }
+    },
+    {
+      "source": "/api/scan-timetable",
+      "destination": {
+        "type": "service",
+        "service": "student-digital-twin-api"
+      }
+    },
+    {
       "source": "/api/student-digital-twin-api(/.*)?",
       "destination": {
         "type": "service",

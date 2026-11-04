@@ -2134,7 +2134,7 @@ export default function Dashboard() {
           image_data: frame,
           language: voiceLanguageRef.current,
           subject_name: activeSubject.name,
-          attendance_percent: activeSubject.prediction.current_percent,
+          attendance_percent: activeSubject?.prediction?.current_percent ?? 0,
           predicted_score: activeSubject.predictedScore
         })
       });
@@ -3117,7 +3117,7 @@ export default function Dashboard() {
 
   // Calculate attendance prediction with On-Duty / Medical exemption support
   useEffect(() => {
-    if (activeSubject.conducted === 0 || activeSubject.attended > activeSubject.conducted) return;
+    if (!activeSubject || activeSubject.conducted === 0 || activeSubject.attended > activeSubject.conducted) return;
     const fetchPrediction = async () => {
       try {
         const response = await fetch(`${API_BASE_URL}/predict/attendance`, {
@@ -3127,24 +3127,44 @@ export default function Dashboard() {
             conducted: activeSubject.conducted,
             attended: activeSubject.attended,
             od_leaves: activeSubject.odLeaves || 0,
-            target_percent: activeSubject.targetPercent
+            target_percent: activeSubject.targetPercent || 75
           })
         });
         if (response.ok) {
           const data = await response.json();
           updateActiveSubject({ prediction: data });
+        } else {
+          throw new Error(`Prediction API status: ${response.status}`);
         }
       } catch (error) {
-        console.error('Error fetching prediction:', error);
+        console.warn('Attendance prediction running in offline fallback mode:', error);
+        const cond = activeSubject.conducted || 0;
+        const att = activeSubject.attended || 0;
+        const od = activeSubject.odLeaves || 0;
+        const target = activeSubject.targetPercent || 75;
+        const effAtt = att + od;
+        const effPct = cond > 0 ? Math.min(100, Math.round((effAtt / cond) * 1000) / 10) : 0;
+        const curPct = cond > 0 ? Math.min(100, Math.round((att / cond) * 1000) / 10) : 0;
+        const needed = Math.max(0, Math.ceil((target * cond - 100 * effAtt) / (100 - target)));
+        const safe = Math.max(0, Math.floor((100 * effAtt - target * cond) / target));
+        updateActiveSubject({
+          prediction: {
+            current_percent: curPct,
+            effective_percent: effPct,
+            classes_needed_for_target: needed,
+            safe_bunks_available: safe,
+            od_leaves: od
+          }
+        });
       }
     };
     const timeoutId = setTimeout(() => { fetchPrediction(); }, 500);
     return () => clearTimeout(timeoutId);
-  }, [activeSubject.conducted, activeSubject.attended, activeSubject.odLeaves, activeSubject.targetPercent, activeSubjectId, updateActiveSubject]);
+  }, [activeSubject?.conducted, activeSubject?.attended, activeSubject?.odLeaves, activeSubject?.targetPercent, activeSubjectId, updateActiveSubject]);
 
   // Calculate Exam Score
   useEffect(() => {
-    if (activeSubject.studyHours === 0 && activeSubject.pastMarks === 0 && !activeSubject.ciaMarks && !activeSubject.endSemMarks) return;
+    if (!activeSubject || (activeSubject.studyHours === 0 && activeSubject.pastMarks === 0 && !activeSubject.ciaMarks && !activeSubject.endSemMarks)) return;
     const fetchExamScore = async () => {
       try {
         const response = await fetch(`${API_BASE_URL}/predict/exam-score`, {
@@ -3153,7 +3173,7 @@ export default function Dashboard() {
           body: JSON.stringify({
             study_hours: activeSubject.studyHours || 0,
             past_marks: activeSubject.pastMarks || ((activeSubject.ciaMarks || 0) + (activeSubject.endSemMarks || 0)),
-            attendance_percent: activeSubject.prediction.current_percent || activeSubject.targetPercent,
+            attendance_percent: activeSubject?.prediction?.current_percent || activeSubject?.targetPercent || 75,
             cia_marks: activeSubject.ciaMarks || 0,
             end_sem_marks: activeSubject.endSemMarks || 0
           })
@@ -3161,14 +3181,21 @@ export default function Dashboard() {
         if (response.ok) {
           const data = await response.json();
           updateActiveSubject({ predictedScore: data.predicted_score });
+        } else {
+          throw new Error(`Exam score API status: ${response.status}`);
         }
       } catch (error) {
-        console.error('Error fetching exam score:', error);
+        console.warn('Exam score prediction running in offline fallback mode:', error);
+        const study = activeSubject.studyHours || 0;
+        const past = activeSubject.pastMarks || ((activeSubject.ciaMarks || 0) + (activeSubject.endSemMarks || 0));
+        const att = activeSubject?.prediction?.current_percent || activeSubject?.targetPercent || 75;
+        const est = Math.min(100, Math.round((past * 0.5 + (att / 100) * 30 + Math.min(study * 2, 20))));
+        updateActiveSubject({ predictedScore: est });
       }
     };
     const timeoutId = setTimeout(() => { fetchExamScore(); }, 500);
     return () => clearTimeout(timeoutId);
-  }, [activeSubject.studyHours, activeSubject.pastMarks, activeSubject.ciaMarks, activeSubject.endSemMarks, activeSubject.prediction.current_percent, activeSubject.targetPercent, activeSubjectId, updateActiveSubject]);
+  }, [activeSubject?.studyHours, activeSubject?.pastMarks, activeSubject?.ciaMarks, activeSubject?.endSemMarks, activeSubject?.prediction?.current_percent, activeSubject?.targetPercent, activeSubjectId, updateActiveSubject]);
 
   // Helper to fetch cloud telemetry from SQLite backend
   const fetchCloudTelemetry = async (userObj: UserProfile | null) => {
@@ -5382,16 +5409,16 @@ export default function Dashboard() {
               <div className="progress-container">
                 <div className="progress-header">
                   <span style={{ fontSize: "0.875rem", color: "var(--text-muted)", fontWeight: 500 }}>
-                    Current Attendance {activeSubject.odLeaves && activeSubject.odLeaves > 0 ? '(Effective with OD)' : ''}
+                    Current Attendance {activeSubject?.odLeaves && activeSubject.odLeaves > 0 ? '(Effective with OD)' : ''}
                   </span>
                   <span className="progress-value">
-                    {activeSubject.prediction?.effective_percent ?? activeSubject.prediction.current_percent}%
+                    {(activeSubject?.prediction?.effective_percent ?? activeSubject?.prediction?.current_percent ?? 0).toFixed(1)}%
                   </span>
                 </div>
                 <div className="progress-track" style={{ marginTop: "0.5rem" }}>
                   <div
-                    className={`progress-fill ${(activeSubject.prediction?.effective_percent ?? activeSubject.prediction.current_percent) >= activeSubject.targetPercent ? 'success' : 'danger'}`}
-                    style={{ width: `${Math.min(activeSubject.prediction?.effective_percent ?? activeSubject.prediction.current_percent, 100)}%` }}
+                    className={`progress-fill ${(activeSubject?.prediction?.effective_percent ?? activeSubject?.prediction?.current_percent ?? 0) >= (activeSubject?.targetPercent || 75) ? 'success' : 'danger'}`}
+                    style={{ width: `${Math.min(activeSubject?.prediction?.effective_percent ?? activeSubject?.prediction?.current_percent ?? 0, 100)}%` }}
                   ></div>
                 </div>
               </div>
@@ -5399,14 +5426,14 @@ export default function Dashboard() {
 
             <div className="stat-grid">
               <div className="stat-box">
-                <span className="stat-value">{activeSubject.prediction.classes_needed_for_target}</span>
+                <span className="stat-value">{activeSubject?.prediction?.classes_needed_for_target ?? 0}</span>
                 <span className="stat-label">Classes Needed to Reach Target</span>
               </div>
               <div className="stat-box">
-                <span className="stat-value" style={{ color: "var(--accent-cyan)" }}>{activeSubject.prediction.safe_bunks_available}</span>
+                <span className="stat-value" style={{ color: "var(--accent-cyan)" }}>{activeSubject?.prediction?.safe_bunks_available ?? 0}</span>
                 <span className="stat-label">Safe Leaves Available</span>
               </div>
-              {activeSubject.odLeaves && activeSubject.odLeaves > 0 ? (
+              {activeSubject?.odLeaves && activeSubject.odLeaves > 0 ? (
                 <div className="stat-box">
                   <span className="stat-value" style={{ color: "#fbbf24" }}>+{activeSubject.odLeaves}</span>
                   <span className="stat-label">OD / Medical Leaves (Exempted)</span>
@@ -5637,11 +5664,11 @@ export default function Dashboard() {
             </div>
 
             <div style={{ height: "205px", width: "100%", position: "relative" }}>
-              {chartViewMode === 'distribution' ? (
+              {isClient && (chartViewMode === 'distribution' ? (
                 <Chart type="bar" data={distributionChartData as ChartData<'bar'>} options={distributionChartOptions as ChartOptions<'bar'>} />
               ) : (
                 <Chart type="line" data={trendChartData} options={trendChartOptions} />
-              )}
+              ))}
             </div>
 
             {chartViewMode === 'distribution' && (
