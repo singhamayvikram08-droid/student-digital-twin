@@ -972,8 +972,8 @@ export default function CgpaPlannerPortal() {
                 <input
                   type="text"
                   placeholder="Add course name (e.g. Distributed Systems)..."
-                  className="cyber-input"
-                  style={{ flex: 1, minWidth: "200px" }}
+                  className="cyber-input quick-add-name-input"
+                  style={{ flex: 1 }}
                   value={newCourseName}
                   onChange={(e) => setNewCourseName(e.target.value)}
                   onKeyDown={(e) => {
@@ -981,37 +981,39 @@ export default function CgpaPlannerPortal() {
                   }}
                   aria-label="Course Name"
                 />
-                <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", flexShrink: 0 }}>
-                  <input
-                    type="number"
-                    min="0.5"
-                    max="20"
-                    step="0.5"
-                    style={{ width: "68px", textAlign: "center", fontWeight: 700 }}
-                    className="cyber-input"
-                    value={newCourseCredits}
-                    onChange={(e) => setNewCourseCredits(parseFloat(e.target.value) || 1)}
-                    title="Course Credits"
-                    aria-label="Course Credits"
-                  />
-                  <span style={{ fontSize: "0.78rem", color: "#64748B", fontWeight: 600 }}>cr</span>
+                <div className="quick-add-middle-row" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <div className="quick-add-credits-group" style={{ display: "flex", alignItems: "center", gap: "0.3rem", flexShrink: 0 }}>
+                    <input
+                      type="number"
+                      min="0.5"
+                      max="20"
+                      step="0.5"
+                      style={{ width: "68px", textAlign: "center", fontWeight: 700 }}
+                      className="cyber-input"
+                      value={newCourseCredits}
+                      onChange={(e) => setNewCourseCredits(parseFloat(e.target.value) || 1)}
+                      title="Course Credits"
+                      aria-label="Course Credits"
+                    />
+                    <span style={{ fontSize: "0.78rem", color: "#64748B", fontWeight: 600 }}>cr</span>
+                  </div>
+                  <select
+                    className="cyber-select quick-add-category-select"
+                    value={newCourseCategory}
+                    onChange={(e) => setNewCourseCategory(e.target.value as CourseEntry['category'])}
+                    aria-label="Course Category"
+                    style={{ minWidth: "150px" }}
+                  >
+                    <option value="Core Theory">Core Theory (4cr)</option>
+                    <option value="Professional Elective">Elective (3cr)</option>
+                    <option value="Lab / Practical">Lab (1.5cr)</option>
+                    <option value="Project / Capstone">Capstone (6cr)</option>
+                    <option value="Open Elective">Open Elective (2cr)</option>
+                  </select>
                 </div>
-                <select
-                  className="cyber-select"
-                  value={newCourseCategory}
-                  onChange={(e) => setNewCourseCategory(e.target.value as CourseEntry['category'])}
-                  aria-label="Course Category"
-                  style={{ minWidth: "155px", flexShrink: 0 }}
-                >
-                  <option value="Core Theory">Core Theory (4cr)</option>
-                  <option value="Professional Elective">Elective (3cr)</option>
-                  <option value="Lab / Practical">Lab (1.5cr)</option>
-                  <option value="Project / Capstone">Capstone (6cr)</option>
-                  <option value="Open Elective">Open Elective (2cr)</option>
-                </select>
                 <button
                   type="button"
-                  className="cyber-btn cyber-btn-cyan"
+                  className="cyber-btn cyber-btn-cyan quick-add-submit-btn"
                   onClick={() => handleAddCourse(activeSemester.id)}
                   disabled={!newCourseName.trim()}
                   style={{ whiteSpace: "nowrap", flexShrink: 0, padding: "0.5rem 1.1rem" }}

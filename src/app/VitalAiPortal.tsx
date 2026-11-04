@@ -516,28 +516,12 @@ export default function VitalAiPortal({
         setIsListeningVoice(false);
         const speech = event.results[0][0].transcript.toLowerCase();
 
-        // Age parsing: "21 age", "21 yr", "21 yrs", "21 yr old", "age 21", "im 21", "21"
-        const prefixAge = speech.match(/\bage\s*(?:is|at|of|[:=-])?\s*(\d{1,3})\b/);
-        const suffixAge = speech.match(/\b(\d{1,3})\s*(?:age|years?(\s*old)?|y\/o|yrs?(\s*old)?|yr(\s*old)?|yo|y)\b/);
-        const convAge = speech.match(/\b(?:i(?:'m|m|\s+am)|just)\s*(\d{1,3})\b/);
-        let parsedAge: string | null = null;
-        if (prefixAge) parsedAge = prefixAge[1];
-        else if (suffixAge) parsedAge = suffixAge[1];
-        else if (convAge) parsedAge = convAge[1];
-        else if (/^\s*(\d{1,2})\s*$/.test(speech)) parsedAge = speech.trim();
-
-        if (parsedAge) {
-          setAge(parsedAge);
-        }
-
-        // Weight parsing
-        const weightMatch = speech.match(/weight\s*(?:is|at|of)?\s*(\d+(?:\.\d+)?)/) || speech.match(/(\d+(?:\.\d+)?)\s*(?:kg|lbs?|kilos?)/);
+        const weightMatch = speech.match(/weight\s*(?:is|at|of)?\s*(\d+(?:\.\d+)?)/);
         if (weightMatch) {
           setWeight(weightMatch[1]);
         }
 
-        // Height parsing
-        const heightMatch = speech.match(/height\s*(?:is|at|of)?\s*(\d+(?:\.\d+)?)/) || speech.match(/(\d{2,3})\s*cm/);
+        const heightMatch = speech.match(/height\s*(?:is|at|of)?\s*(\d+(?:\.\d+)?)/);
         if (heightMatch) {
           if (unit === 'metric') {
             setHeightCm(heightMatch[1]);
@@ -546,15 +530,10 @@ export default function VitalAiPortal({
           }
         }
 
-        const summaryParts = [];
-        if (parsedAge) summaryParts.push(`Age: ${parsedAge} yr`);
-        if (weightMatch) summaryParts.push(`Weight: ${weightMatch[1]}`);
-        if (heightMatch) summaryParts.push(`Height: ${heightMatch[1]}`);
-
-        if (summaryParts.length > 0) {
-          showToast(`✨ AI Parsed: ${summaryParts.join(' • ')}`);
+        if (weightMatch || heightMatch) {
+          showToast(`Voice parsed: ${weightMatch ? `Weight: ${weightMatch[1]} ` : ''}${heightMatch ? `Height: ${heightMatch[1]}` : ''}`);
         } else {
-          showToast(`Heard: "${speech}". Try: "21 age", "21 yr", or "Weight 70 height 175"`);
+          showToast(`Heard: "${speech}". Try saying: "Weight 68 height 175"`);
         }
       };
 

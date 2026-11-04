@@ -63,6 +63,15 @@ interface SpeechRecognitionInstance {
   stop: () => void;
 }
 
+interface FaceLandmarkerInstance {
+  detectForVideo: (video: HTMLVideoElement, time: number) => {
+    faceLandmarks?: Array<Array<{ x: number; y: number; z: number }>>;
+    faceBlendshapes?: Array<{
+      categories: Array<{ categoryName: string; score: number }>;
+    }>;
+  };
+}
+
 interface Subject {
   id: string;
   name: string;
@@ -369,7 +378,7 @@ const HINDI_ACCENT_DEFINITIONS: HindiAccentDefinition[] = [
     tag: 'Crisp & Natural',
     speaker: 'Rishi (Indian English / Hinglish)',
     description: 'Natural conversational Indian college student accent (Male). Articulate, clear, zero robotic muffling.',
-    samplePhrase: 'Arrey Amay bhai! Attendance aur studies ka poora calculation mere paas hai. Bilkul chill kar!'
+    samplePhrase: 'Arrey bhai! Attendance aur studies ka poora calculation mere paas hai. Bilkul chill kar!'
   },
   {
     id: 'google',
@@ -620,7 +629,14 @@ export default function Dashboard() {
   const [profileError, setProfileError] = useState<string | null>(null);
 
   // Theme State
-  const [isLightMode, setIsLightMode] = useState(false);
+  const [isLightMode, setIsLightMode] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return localStorage.getItem('digital_twin_theme') === 'light';
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
     if (isLightMode) {
@@ -630,7 +646,15 @@ export default function Dashboard() {
     }
   }, [isLightMode]);
 
-  const toggleTheme = () => setIsLightMode(!isLightMode);
+  const toggleTheme = () => {
+    setIsLightMode(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('digital_twin_theme', next ? 'light' : 'dark');
+      } catch {}
+      return next;
+    });
+  };
 
   // Helper to get active subject
   const activeSubject = subjects.find(s => s.id === activeSubjectId) || subjects[0] || {
@@ -659,10 +683,14 @@ export default function Dashboard() {
   const [videoCallOpen, setVideoCallOpen] = useState(false);
   const videoCallOpenRef = useRef(videoCallOpen);
   const [isMicActive, setIsMicActive] = useState(false);
+  const [copiedMsgIndex, setCopiedMsgIndex] = useState<number | null>(null);
+  const [isAudioMuted, setIsAudioMuted] = useState(false);
+  const isAudioMutedRef = useRef(isAudioMuted);
   const isMicActiveRef = useRef(isMicActive);
 
   useEffect(() => { videoCallOpenRef.current = videoCallOpen; }, [videoCallOpen]);
   useEffect(() => { isMicActiveRef.current = isMicActive; }, [isMicActive]);
+  useEffect(() => { isAudioMutedRef.current = isAudioMuted; }, [isAudioMuted]);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const isSpeakingRef = useRef(false);
   const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
@@ -670,8 +698,7 @@ export default function Dashboard() {
 
   // MediaPipe Face Mesh & Emotion Telemetry States & Refs
   const faceMeshCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const faceLandmarkerRef = useRef<any>(null);
+  const faceLandmarkerRef = useRef<FaceLandmarkerInstance | null>(null);
   const faceMeshAnimFrameRef = useRef<number | null>(null);
   const [isFaceMeshActive, setIsFaceMeshActive] = useState(true);
   const isFaceMeshActiveRef = useRef(isFaceMeshActive);
@@ -693,6 +720,11 @@ export default function Dashboard() {
       if (activeSubjectId === subjId) {
         setActiveSubjectId(remaining[0].id);
       }
+      try {
+        if (user) {
+          localStorage.setItem(getUserStorageKey(user, 'subjects'), JSON.stringify(remaining));
+        }
+      } catch {}
     }
   };
 
@@ -1111,7 +1143,7 @@ export default function Dashboard() {
     ['साथ', 'saath'],
     ['हूँ', 'hoon'],
     ['नमस्ते', 'Namaste'],
-    ['अमय', 'Amay'],
+    ['दोस्त', 'Dost'],
     ['पढ़ाई', 'padhai'],
     ['गणित', 'maths'],
     ['चिंता मत ले', 'chinta mat le'],
@@ -1304,9 +1336,6 @@ export default function Dashboard() {
       .replace(/÷/g, ' भाग ');
 
     const englishToDevanagari: [RegExp, string][] = [
-      [/\bAmay\b/gi, 'अमय'],
-      [/\bVikram\b/gi, 'विक्रम'],
-      [/\bSingh\b/gi, 'सिंह'],
       [/\battendance\b/gi, 'अटेंडेंस'],
       [/\bclasses\b/gi, 'क्लासेस'],
       [/\bclass\b/gi, 'क्लास'],
@@ -1567,6 +1596,7 @@ export default function Dashboard() {
   };
 
   const speak = (text: string, forceLang?: 'hi' | 'en' | 'kn' | 'te', forceAccent?: HindiVoiceAccent) => {
+    if (isAudioMutedRef.current) return;
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       try {
         window.speechSynthesis.cancel();
@@ -1655,6 +1685,17 @@ export default function Dashboard() {
     speak(samplePhrase, 'hi', accentId);
   };
 
+  const toggleAudioMute = () => {
+    const next = !isAudioMuted;
+    setIsAudioMuted(next);
+    isAudioMutedRef.current = next;
+    if (next) {
+      interruptSpeech();
+    } else {
+      speak("Audio unmuted. I'm ready to talk!");
+    }
+  };
+
   // Call Timer & Video Scroll Refs
   const [callDuration, setCallDuration] = useState(0);
   const videoChatEndRef = useRef<HTMLDivElement>(null);
@@ -1676,6 +1717,12 @@ export default function Dashboard() {
     }
     return () => { if (interval) clearInterval(interval); };
   }, [videoCallOpen]);
+
+  // Video Ref & Camera Toggle State
+  const userVideoRef = useRef<HTMLVideoElement>(null);
+  const [isCameraActive, setIsCameraActive] = useState(true);
+  const isCameraActiveRef = useRef(isCameraActive);
+  useEffect(() => { isCameraActiveRef.current = isCameraActive; }, [isCameraActive]);
 
   // Proactive Facial Emotion Consultant Inquiries ("Why are you sad?", "Why are you so happy?", "Where are you? What are you doing?")
   const lastEmotionInquiryTimeRef = useRef<{ sad: number; happy: number; eyesMissing: number }>({ sad: 0, happy: 0, eyesMissing: 0 });
@@ -1708,6 +1755,11 @@ export default function Dashboard() {
       detectedEmotion.smileScore >= 32
     );
 
+    if (!isCameraActive) {
+      eyesMissingStreakRef.current = 0;
+      return;
+    }
+
     if (isEyesMissing) {
       eyesMissingStreakRef.current += 1;
       sadStreakRef.current = Math.max(0, sadStreakRef.current - 1);
@@ -1727,13 +1779,13 @@ export default function Dashboard() {
     }
 
     if (!isSpeakingRef.current && !isVideoLoading) {
-      const studentName = user?.firstName || 'Amay';
+      const studentName = user?.firstName || 'Student';
       const lang = voiceLanguageRef.current;
       const isRishiAccent = lang === 'hi' && (hindiAccentRef.current === 'rishi');
-      const hindiName = studentName === 'Amay' ? 'अमय' : studentName;
+      const hindiName = studentName === 'Student' ? 'दोस्त' : studentName;
 
       // 1. Eyes Not Detected Inquiry Trigger (fires when eyes are missing/closed for prolonged period)
-      if (eyesMissingStreakRef.current >= 12 && (now - lastEmotionInquiryTimeRef.current.eyesMissing > 25000)) {
+      if (eyesMissingStreakRef.current >= 30 && (now - lastEmotionInquiryTimeRef.current.eyesMissing > 30000)) {
         lastEmotionInquiryTimeRef.current.eyesMissing = now;
         eyesMissingStreakRef.current = 0;
         let inquiry = `Hey ${studentName}, where are you? What are you doing? I can't see your eyes right now — are you still with me?`;
@@ -1751,7 +1803,7 @@ export default function Dashboard() {
         speak(inquiry);
       }
       // 2. Sad Inquiry Trigger (fires after 3 consecutive frames with sad indicators)
-      else if (sadStreakRef.current >= 3 && (now - lastEmotionInquiryTimeRef.current.sad > 25000)) {
+      else if (sadStreakRef.current >= 4 && (now - lastEmotionInquiryTimeRef.current.sad > 30000)) {
         lastEmotionInquiryTimeRef.current.sad = now;
         sadStreakRef.current = 0;
         let inquiry = `Hey ${studentName}... why are you feeling sad today? What's going on? Talk to me — I've got your back.`;
@@ -1762,14 +1814,14 @@ export default function Dashboard() {
         } else if (lang === 'kn') {
           inquiry = `ಹೇ ${studentName}... ಇವತ್ತು ಯಾಕೆ ಇಷ್ಟೊಂದು ಬೇಸರದಲ್ಲಿದ್ದೀಯಾ ಮಗಾ? ಏನಾಯ್ತು? ನಾನು ನಿನ್ನ ಜೊತೆ ಇದ್ದೀನಿ!`;
         } else if (lang === 'te') {
-          inquiry = `హే ${studentName}... ఈరోజు ఎందుకు ఇంత డల్ గా లేదా బాధగా ఉన్నావ్ బావా? ఏమైంది? నాతో చెప్పు, నేనున్నాను!`;
+          inquiry = `హే ${studentName}... ఈరోజు ఎందుకు ఇంత డಲ್ గా లేదా బాధగా ఉన్నావ్ బావా? ఏమైంది? నాతో చెప్పు, నేనున్నాను!`;
         }
 
         setVideoMessages(prev => [...prev, { role: 'msg-ai', content: inquiry }]);
         speak(inquiry);
       }
       // 3. Happy Inquiry Trigger (fires after 3 consecutive frames with happy indicators)
-      else if (happyStreakRef.current >= 3 && (now - lastEmotionInquiryTimeRef.current.happy > 25000)) {
+      else if (happyStreakRef.current >= 4 && (now - lastEmotionInquiryTimeRef.current.happy > 30000)) {
         lastEmotionInquiryTimeRef.current.happy = now;
         happyStreakRef.current = 0;
         let inquiry = `Hey ${studentName}! Why are you so happy today? What's the good news? Tell me everything! 😄`;
@@ -1780,14 +1832,15 @@ export default function Dashboard() {
         } else if (lang === 'kn') {
           inquiry = `ಹೇ ${studentName}! ಇವತ್ತು ಯಾಕೆ ಇಷ್ಟು ಖುಷಿಯಾಗಿದ್ದೀಯಾ ಮಗಾ? ಏನಾದ್ರೂ ಗುಡ್ ನ್ಯೂಸ್ ಇದ್ಯಾ? ಹೇಳು! 😄`;
         } else if (lang === 'te') {
-          inquiry = `హే ${studentName}! ఈరోజు ఎందుకు ఇంత హ్యాపీగా ఉన్నావ్ బావా? ఏంటి విశేషం? చెప్పు! 😄`;
+          inquiry = `ಹೇ ${studentName}! ఈరోజు ఎందుకు ఇంత హ్యాపీగా ఉన్నావ్ బావా? ఏంటి విశేషం? చెప్పు! 😄`;
         }
 
         setVideoMessages(prev => [...prev, { role: 'msg-ai', content: inquiry }]);
         speak(inquiry);
       }
     }
-  }, [detectedEmotion, videoCallOpen, isVideoLoading, user?.firstName]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detectedEmotion, videoCallOpen, isVideoLoading, user?.firstName, isCameraActive]);
 
   useEffect(() => {
     videoChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1799,11 +1852,6 @@ export default function Dashboard() {
     return `${m}:${s}`;
   };
 
-  // Video Ref & Camera Toggle State
-  const userVideoRef = useRef<HTMLVideoElement>(null);
-  const [isCameraActive, setIsCameraActive] = useState(true);
-  const isCameraActiveRef = useRef(isCameraActive);
-  useEffect(() => { isCameraActiveRef.current = isCameraActive; }, [isCameraActive]);
 
   useEffect(() => {
     if (userVideoRef.current && userStream) {
@@ -1865,11 +1913,9 @@ export default function Dashboard() {
           }
 
           if (!isMounted) return;
-          faceLandmarkerRef.current = landmarker;
+          faceLandmarkerRef.current = landmarker as unknown as FaceLandmarkerInstance;
           setIsFaceMeshLoading(false);
         }
-
-        const { DrawingUtils, FaceLandmarker } = await import('@mediapipe/tasks-vision');
 
         const processVideoFrame = () => {
           if (!isMounted) return;
@@ -1895,7 +1941,7 @@ export default function Dashboard() {
                   ctx.clearRect(0, 0, canvas.width, canvas.height);
                 }
 
-                if (results && results.faceLandmarks && results.faceLandmarks.length > 0) {
+                if (isFaceMeshActiveRef.current && results && results.faceLandmarks && results.faceLandmarks.length > 0) {
                   const landmarks = results.faceLandmarks[0];
                   const blendshapes = results.faceBlendshapes && results.faceBlendshapes.length > 0 ? results.faceBlendshapes[0] : null;
 
@@ -2007,7 +2053,7 @@ export default function Dashboard() {
       try {
         const frame = captureUserVideoFrame();
         const payload: Record<string, unknown> = {
-          user_name: user?.firstName || 'Amay',
+          user_name: user?.firstName || 'Anonymous',
           language: voiceLanguageRef.current,
           has_face: detectedEmotionRef.current.hasFace,
           eyes_detected: detectedEmotionRef.current.eyesDetected,
@@ -2053,6 +2099,7 @@ export default function Dashboard() {
     }, 2800);
 
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoCallOpen, isCameraActive, user?.firstName]);
 
   const handleAnalyzeVideo = async (customQuery?: string) => {
@@ -2149,6 +2196,7 @@ export default function Dashboard() {
   };
 
   const stopMedia = () => {
+    interruptSpeech();
     if (userStream) {
       userStream.getTracks().forEach(track => {
         try { track.stop(); } catch {}
@@ -2168,10 +2216,37 @@ export default function Dashboard() {
     }
   };
 
-  const toggleCamera = () => {
-    if (!userStream) return;
+  const toggleCamera = async () => {
+    if (!userStream) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+          audio: isMicActiveRef.current
+        });
+        setUserStream(stream);
+        setIsCameraActive(true);
+        setMediaError(null);
+      } catch (err: unknown) {
+        const errorName = err instanceof Error ? err.name : "";
+        setMediaError(errorName === 'NotAllowedError' ? "Permission Denied by Browser" : "Camera unavailable");
+      }
+      return;
+    }
     const videoTracks = userStream.getVideoTracks();
-    if (videoTracks.length === 0) return;
+    if (videoTracks.length === 0) {
+      try {
+        const vStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }
+        });
+        vStream.getVideoTracks().forEach(t => userStream.addTrack(t));
+        setIsCameraActive(true);
+        setMediaError(null);
+      } catch (err: unknown) {
+        const errorName = err instanceof Error ? err.name : "";
+        setMediaError(errorName === 'NotAllowedError' ? "Permission Denied by Browser" : "Camera unavailable");
+      }
+      return;
+    }
     const nextState = !isCameraActive;
     videoTracks.forEach(t => { t.enabled = nextState; });
     setIsCameraActive(nextState);
@@ -2616,6 +2691,258 @@ export default function Dashboard() {
     }
   };
 
+  // Client-Side Autonomous AI Twin Intelligence Engine (Fallback & Instant Engine)
+  const generateClientSideTwinResponse = (params: {
+    userMsg: string;
+    matchedSubject: Subject;
+    allSubjects: Subject[];
+    user: UserProfile | null;
+    language: 'auto' | 'hi' | 'en' | 'kn' | 'te';
+    detectedEmotion: FacialEmotionTelemetry | null;
+    isCameraActive: boolean;
+  }): string => {
+    const { userMsg, matchedSubject, allSubjects, user, language, detectedEmotion, isCameraActive } = params;
+    const msg = userMsg.toLowerCase().trim();
+    const userName = user?.firstName || 'Anonymous';
+
+    // Determine effective spoken & written script language
+    let effectiveLang = language;
+    if (effectiveLang === 'auto') {
+      const hasDevanagari = Array.from(userMsg).some(c => c >= '\u0900' && c <= '\u097F');
+      const hasKannada = Array.from(userMsg).some(c => c >= '\u0C80' && c <= '\u0CFF');
+      const hasTelugu = Array.from(userMsg).some(c => c >= '\u0C00' && c <= '\u0C7F');
+
+      if (hasDevanagari || /\b(kya|karu|kaise|bhai|yaar|batao|aaj|padhe|chhutti|kitna|bunk)\b/i.test(msg)) {
+        effectiveLang = 'hi';
+      } else if (hasKannada || /\b(guru|maga|hegiddira|namaskara|yenu)\b/i.test(msg)) {
+        effectiveLang = 'kn';
+      } else if (hasTelugu || /\b(bava|thammudu|namaskaram|ela unnav)\b/i.test(msg)) {
+        effectiveLang = 'te';
+      } else {
+        effectiveLang = 'en';
+      }
+    }
+
+    const cond = matchedSubject.conducted || 0;
+    const att = matchedSubject.attended || 0;
+    const target = matchedSubject.targetPercent || 75;
+    const rawPct = cond > 0 ? (att / cond) * 100 : 0;
+    const effPct = matchedSubject.prediction?.effective_percent ?? rawPct;
+    const safeBunks = matchedSubject.prediction?.safe_bunks_available ?? Math.max(0, Math.floor((att - (target / 100) * cond) / (target / 100)));
+    const classesNeeded = matchedSubject.prediction?.classes_needed_for_target ?? Math.max(0, Math.ceil(((target / 100) * cond - att) / (1 - target / 100)));
+    const nextPctIfBunk = ((att / ((cond || 1) + 1)) * 100);
+
+    // 1. Emotion & Appearance & Vision inquiries (strictly scoped to explicit appearance/camera questions)
+    const isAppearanceQuery = /\b(how do i look|my expression|look at my face|can you see my face|can you see me|kaisa lag raha hu|mera chehra|how am i looking|my face)\b/i.test(msg);
+    const isExplicitEyeQuery = /\b(can you see my eyes|aankhein dikh rahi|meri aankhein|are my eyes visible)\b/i.test(msg);
+    const isSadQuery = /\b(why am i sad|i am sad|feeling sad|i feel depressed|feeling down|bahut udas|dard|enquire sad)\b/i.test(msg);
+    const isHappyQuery = /\b(why am i happy|i am happy|feeling happy|feeling joyful|bahut khush|enquire happy)\b/i.test(msg);
+
+    if (isAppearanceQuery || isExplicitEyeQuery) {
+      if (!isCameraActive) {
+        if (effectiveLang === 'hi') return `अरे ${userName}! तुम्हारा कैमरा अभी बंद है। कैमरा ऑन करो तो मैं तुम्हारी एक्सप्रेशन देख सकूँगा!`;
+        if (effectiveLang === 'kn') return `ಹೇ ${userName}, ಕ್ಯಾಮೆರಾ ಆಫ್ ಆಗಿದೆ! ಕ್ಯಾಮೆರಾ ಆನ್ ಮಾಡಿದ್ರೆ ನಾನು ನಿನ್ನನ್ನ ನೋಡಬಹುದು.`;
+        if (effectiveLang === 'te') return `హే ${userName}, కెమెరా ఆఫ్ లో ఉంది! కెమెరా ఆన్ చెయ్యి, మనం మాట్లాడదాం.`;
+        return `Hey ${userName}, your camera is currently off! Turn on your camera and I'll analyze your facial expression and alertness in real time.`;
+      }
+      if (detectedEmotion && (!detectedEmotion.hasFace || !detectedEmotion.eyesDetected || detectedEmotion.eyeOpenness < 22)) {
+        if (effectiveLang === 'hi') return `अरे ${userName}, कहाँ चले गए भाई? मुझे तुम्हारी आँखें नहीं दिख रही हैं—स्क्रीन के ठीक सामने आओ!`;
+        if (effectiveLang === 'kn') return `ಹೇ ${userName}, ಎಲ್ಲಿಗೆ ಹೋದೆ ಮಗಾ? ನನಗೆ ನಿನ್ನ ಕಣ್ಣುಗಳು ಕಾಣಿಸ್ತಿಲ್ಲ—ಕ್ಯಾಮೆರಾ ಮುಂದೆ ಬಾ!`;
+        if (effectiveLang === 'te') return `హే ${userName}, ఎక్కడికి వెళ్లావ్ బావా? నాకు నీ కళ్ళు కనిపించట్లేదు—స్క్రీన్ ముందుకు రా!`;
+        return `Hey ${userName}, where are you? What are you doing? I can't see your eyes right now—step right in front of the camera!`;
+      }
+      if (effectiveLang === 'hi') return `मैं तो यहीं तुम्हारी स्क्रीन पर हूँ ${userName}! मुझे तुम्हारी आँखें और फोकस साफ दिख रहा है (${detectedEmotion?.focusScore || 90}% फोकस)। बताओ अभी क्या चल रहा है?`;
+      if (effectiveLang === 'kn') return `ನಾನು ಇಲ್ಲೇ ನಿನ್ನ ಸ್ಕ್ರೀನ್ ಮೇಲೆ ಇದ್ದೀನಿ ${userName}! ನಿನ್ನ ಕಣ್ಣುಗಳು ಕಾಣಿಸ್ತಿದೆ, ಫುಲ್ ಫೋಕಸ್ ಆಗಿದ್ದೀಯಾ.`;
+      if (effectiveLang === 'te') return `నేను ఇక్కడే నీ స్క్రీన్ మీదే ఉన్నాను ${userName}! నీ కళ్ళు కనిపిస్తున్నాయి, ఫుల్ ఫోకస్ లో ఉన్నావ్.`;
+      return `I'm right here with you on screen, ${userName}! I can see your eyes and you're locked in (${detectedEmotion?.focusScore || 90}% focus). What are you working on right now?`;
+    }
+
+    if (isSadQuery || (isAppearanceQuery && detectedEmotion && detectedEmotion.hasFace && detectedEmotion.label.includes('Sad'))) {
+      if (effectiveLang === 'hi') return `अरे ${userName}... तुम आज उदास लग रहे हो भाई। क्या हुआ, कॉलेज या पढ़ाई में कोई टेंशन है? बेझिझक बताओ, हम दोनों मिलकर संभाल लेंगे!`;
+      if (effectiveLang === 'kn') return `ಹೇ ${userName}... ಇವತ್ತು ಯಾಕೆ ಬೇಸರದಲ್ಲಿದ್ದೀಯಾ ಮಗಾ? ಏನಾಯ್ತು? ಟೆನ್ಷನ್ ತಗೋಬೇಡ, ನಾನು ನಿನ್ನ ಜೊತೆ ಇದ್ದೀನಿ!`;
+      if (effectiveLang === 'te') return `హే ${userName}... ఈరోజు ఎందుకు బాధగా ఉన్నావ్ బావా? ఏమైంది? టెన్షన్ పడకు, మనం చూసుకుందాం!`;
+      return `Hey ${userName}... why are you feeling sad today? Did something happen with classes or exams? Talk to me—I've got your back!`;
+    }
+
+    if (isHappyQuery || (isAppearanceQuery && detectedEmotion && detectedEmotion.hasFace && detectedEmotion.label.includes('Happy'))) {
+      if (effectiveLang === 'hi') return `अरे वाह ${userName}! आज इतने खुश क्यों हो भाई? कोई खुशखबरी मिली क्या या टेस्ट बढ़िया गया? बताओ मुझे भी! 😄`;
+      if (effectiveLang === 'kn') return `ಹೇ ${userName}! ಇವತ್ತು ಯಾಕೆ ಇಷ್ಟು ಖುಷಿಯಾಗಿದ್ದೀಯಾ ಮಗಾ? ಏನಾದ್ರೂ ಗುಡ್ ನ್ಯೂಸ್ ಇದ್ಯಾ? ಹೇಳು! 😄`;
+      if (effectiveLang === 'te') return `హే ${userName}! ఈరోజు ఎందుకు ఇంత హ్యాపీగా ఉన్నావ్ బావా? ఏంటి విశేషం? చెప్పు! 😄`;
+      return `Hey ${userName}! Why are you so happy today? What's the good news, buddy? Did you ace a test or just having an awesome day? Tell me everything! 😄`;
+    }
+
+    // 2. Bunking inquiries
+    if (/\b(bunk|leave|skip|chhutti|aaj class)\b/i.test(msg)) {
+      if (safeBunks > 0) {
+        if (effectiveLang === 'hi') {
+          return `हाँ ${userName}, **${matchedSubject.name}** में तुम्हारी वर्तमान अटेंडेंस **${effPct.toFixed(1)}%** है और तुम्हारे पास **${safeBunks} सेफ बंक** उपलब्ध हैं! अगर आज बंक करते हो तो अटेंडेंस **${nextPctIfBunk.toFixed(1)}%** रहेगी, जो तुम्हारे **${target}%** टारगेट से सुरक्षित ऊपर है।`;
+        }
+        if (effectiveLang === 'kn') {
+          return `ಹೌದು ${userName}, **${matchedSubject.name}** ನಲ್ಲಿ ನಿನ್ನ ಹಾಜರಾತಿ **${effPct.toFixed(1)}%** ಇದೆ ಮತ್ತು ನಿನ್ನ ಬಳಿ **${safeBunks} ಸುರಕ್ಷಿತ ಬಂಕ್** ಗಳಿವೆ. ಇವತ್ತು ಬಂಕ್ ಮಾಡಿದ್ರೂ ಹಾಜರಾತಿ **${nextPctIfBunk.toFixed(1)}%** ಇರುತ್ತೆ.`;
+        }
+        if (effectiveLang === 'te') {
+          return `అవును ${userName}, **${matchedSubject.name}** లో నీ హాజరు **${effPct.toFixed(1)}%** ఉంది మరియు నీకు **${safeBunks} సేఫ్ బంక్స్** అందుబాటులో ఉన్నాయి. ఈరోజు బంక్ చేసినా హాజరు **${nextPctIfBunk.toFixed(1)}%** గా సేఫ్ గా ఉంటుంది.`;
+        }
+        return `Yes, ${userName}! In **${matchedSubject.name}**, your attendance is currently **${effPct.toFixed(1)}%** (${att}/${cond}) with **${safeBunks} safe bunk(s)** available. If you skip today's lecture, your attendance will adjust to **${nextPctIfBunk.toFixed(1)}%**, safely above your **${target}%** cutoff.`;
+      } else {
+        if (effectiveLang === 'hi') {
+          return `सावधान ${userName}! **${matchedSubject.name}** में तुम्हारे पास **0 सेफ बंक** बचे हैं (वर्तमान: **${effPct.toFixed(1)}%**, टारगेट: **${target}%**)। अगर आज बंक किया तो अटेंडेंस गिरकर **${nextPctIfBunk.toFixed(1)}%** हो जाएगी। तुम्हें टारगेट पूरा करने के लिए लगातार **${classesNeeded} क्लासेस** अटेंड करनी होंगी!`;
+        }
+        if (effectiveLang === 'kn') {
+          return `ಎಚ್ಚರ ${userName}! **${matchedSubject.name}** ನಲ್ಲಿ ನಿನಗೆ **0 ಸೇಫ್ ಬಂಕ್** ಇದೆ (ಹಾಜರಾತಿ: **${effPct.toFixed(1)}%**). ಇವತ್ತು ಬಂಕ್ ಮಾಡಬೇಡ! ಟಾರ್ಗೆಟ್ ತಲುಪಲು ಮುಂದಿನ **${classesNeeded} ತರಗತಿಗಳನ್ನು** ನಿರಂತರವಾಗಿ ಹಾಜರಾಗಬೇಕು.`;
+        }
+        if (effectiveLang === 'te') {
+          return `జాగ్రత్త ${userName}! **${matchedSubject.name}** లో నీకు **0 సేఫ్ బంక్స్** ఉన్నాయి (హాజరు: **${effPct.toFixed(1)}%**). ఈరోజు బంక్ చెయ్యకు! టార్గెట్ రీచ్ అవ్వడానికి వరుసగా **${classesNeeded} క్లాసులు** అటెండ్ అవ్వాలి.`;
+        }
+        return `Caution, ${userName}! In **${matchedSubject.name}**, you have **0 safe bunks** remaining (attendance: **${effPct.toFixed(1)}%** vs **${target}%** target). Missing today drops your attendance to **${nextPctIfBunk.toFixed(1)}%**. You need to attend the next **${classesNeeded} consecutive classes** to secure exam eligibility.`;
+      }
+    }
+
+    // 3. Classes needed inquiries
+    if (/\b(classes needed|need to attend|how many classes|kitni class|target)\b/i.test(msg)) {
+      if (classesNeeded === 0) {
+        if (effectiveLang === 'hi') return `बढ़िया खबर! **${matchedSubject.name}** में तुम्हारी अटेंडेंस **${effPct.toFixed(1)}%** है, जो तुम्हारे **${target}%** टारगेट से ऊपर है (${safeBunks} सेफ बंक)। तुम्हें एक्स्ट्रा क्लास की जरूरत नहीं है!`;
+        if (effectiveLang === 'kn') return `ಉತ್ತಮ ಸುದ್ದಿ! **${matchedSubject.name}** ನಲ್ಲಿ ನಿನ್ನ ಹಾಜರಾತಿ **${effPct.toFixed(1)}%** ಇದೆ, ನಿನ್ನ **${target}%** ಟಾರ್ಗೆಟ್ ಗಿಂತ ಹೆಚ್ಚಿದೆ.`;
+        if (effectiveLang === 'te') return `మంచి వార్త! **${matchedSubject.name}** లో నీ హాజరు **${effPct.toFixed(1)}%** ఉంది, నీ **${target}%** టార్గెట్ కంటే ఎక్కువే ఉంది.`;
+        return `Great news, ${userName}! In **${matchedSubject.name}**, your attendance is **${effPct.toFixed(1)}%**, comfortably exceeding your **${target}%** requirement (${safeBunks} safe bunks buffer).`;
+      } else {
+        if (effectiveLang === 'hi') return `**${matchedSubject.name}** में तुम्हारी वर्तमान अटेंडेंस **${effPct.toFixed(1)}%** (${att}/${cond}) है। **${target}%** टारगेट हासिल करने के लिए तुम्हें लगातार अगली **${classesNeeded} क्लासेस** बिना एब्सेंट हुए अटेंड करनी होंगी।`;
+        if (effectiveLang === 'kn') return `**${matchedSubject.name}** ನಲ್ಲಿ ನಿನ್ನ ಹಾಜರಾತಿ **${effPct.toFixed(1)}%** ಇದೆ. **${target}%** ತಲುಪಲು ಮುಂದಿನ **${classesNeeded} ತರಗತಿಗಳಿಗೆ** ನಿರಂತರವಾಗಿ ಹಾಜರಾಗಬೇಕು.`;
+        if (effectiveLang === 'te') return `**${matchedSubject.name}** లో నీ హాజరు **${effPct.toFixed(1)}%** ఉంది. **${target}%** రీచ్ అవ్వడానికి వరుసగా **${classesNeeded} క్లాసులకు** హాజరు కావాలి.`;
+        return `In **${matchedSubject.name}**, your attendance is currently **${effPct.toFixed(1)}%** (${att}/${cond}). To cross your **${target}%** threshold, you need to attend the next **${classesNeeded} consecutive classes** without absences.`;
+      }
+    }
+
+    // 4. Exam scores and evaluation inquiries
+    if (/\b(exam|score|marks|cia|end sem|grade|projected)\b/i.test(msg)) {
+      const cia = matchedSubject.ciaMarks ?? 48;
+      const endSem = matchedSubject.endSemMarks ?? 32;
+      const composite = cia + endSem;
+      const neededForPass = Math.max(0, 50 - cia);
+      const neededForDistinction = Math.max(0, 75 - cia);
+      if (effectiveLang === 'hi') {
+        return `**${matchedSubject.name}** का स्कोर इवैल्यूएशन (60 CIA : 40 End Sem):\n• इंटरनल CIA: **${cia} / 60**\n• एंड सेम एग्जाम: **${endSem} / 40**\n• टोटल फाइनल स्कोर: **${composite} / 100 (${composite}%)**\n• पासिंग थ्रेशोल्ड (50%): ${neededForPass === 0 ? 'CIA से ही पास सुरक्षित!' : `एंड सेम में ${neededForPass}/40 चाहिए`}\n• डिस्टिंक्शन (75%): ${neededForDistinction === 0 ? 'डिस्टिंक्शन पक्का!' : `एंड सेम में ${neededForDistinction}/40 चाहिए`}`;
+      }
+      return `Academic Score Breakdown for **${matchedSubject.name}** (60 CIA : 40 End Sem):\n• Continuous Internal Assessment (CIA): **${cia} / 60**\n• End Semester Final Exam: **${endSem} / 40**\n• Projected Composite Score: **${composite} / 100 (${composite}%)**\n• Status: ${composite >= 75 ? 'Distinction Secured (Grade A+)' : composite >= 60 ? 'First Class Standing' : 'Passing Grade'}\n• End Sem Target to Pass (50%): ${neededForPass === 0 ? 'CIA already cleared passing cutoff' : `Need ${neededForPass} / 40`}\n• Target for Distinction (75%): ${neededForDistinction === 0 ? 'Distinction secured' : `Need ${neededForDistinction} / 40`}`;
+    }
+
+    // 5. Semester risk summary
+    if (/\b(summarize|summary|risk|strategy|all subjects|semester)\b/i.test(msg)) {
+      const atRisk = allSubjects.filter(s => (s.prediction?.effective_percent ?? s.prediction?.current_percent ?? 0) < (s.targetPercent || 75));
+      const safe = allSubjects.filter(s => (s.prediction?.effective_percent ?? s.prediction?.current_percent ?? 0) >= (s.targetPercent || 75));
+      const totalAtt = allSubjects.reduce((sum, s) => sum + (s.attended || 0), 0);
+      const totalCond = allSubjects.reduce((sum, s) => sum + (s.conducted || 0), 0);
+      const cumPct = totalCond > 0 ? (totalAtt / totalCond) * 100 : 0;
+
+      if (effectiveLang === 'hi') {
+        let text = `📊 **सेमेस्टर रिस्क और अटेंडेंस रणनीति** (${userName}):\n• कुल संचयी अटेंडेंस: **${cumPct.toFixed(1)}%** (${totalAtt}/${totalCond} लेक्चर्स)\n• कुल विषय: ${allSubjects.length} (सुरक्षित: ${safe.length}, रिस्क में: ${atRisk.length})\n\n`;
+        if (atRisk.length > 0) {
+          text += `⚠️ **प्राथमिकता वाले विषय:**\n`;
+          atRisk.forEach(s => {
+            text += `• **${s.name}**: ${s.prediction?.current_percent?.toFixed(1) || 0}% (टारगेट: ${s.targetPercent || 75}%) — ${s.prediction?.classes_needed_for_target || 0} क्लासेस जरूरी\n`;
+          });
+          text += `\nसलाह: रिस्क वाले विषयों में बंक न करें ताकि परीक्षा में कोई रुकावट न आए।`;
+        } else {
+          text += `✅ शानदार! तुम्हारे सभी विषय 75% टारगेट से ऊपर हैं।`;
+        }
+        return text;
+      }
+
+      let report = `📊 **Semester Strategy & Risk Audit for ${userName}**:\n• Cumulative Attendance: **${cumPct.toFixed(1)}%** (${totalAtt}/${totalCond} classes attended)\n• Enrolled Courses: **${allSubjects.length}** | **${safe.length} Safe** | **${atRisk.length} At Risk**\n\n`;
+      if (atRisk.length > 0) {
+        report += `🚨 **Priority Recovery Action Plan:**\n`;
+        atRisk.forEach(s => {
+          const pct = (s.prediction?.effective_percent ?? s.prediction?.current_percent ?? 0).toFixed(1);
+          report += `• **${s.name}**: Currently at **${pct}%** (Target: ${s.targetPercent || 75}%). Must attend next **${s.prediction?.classes_needed_for_target || 0} consecutive classes**.\n`;
+        });
+        report += `\n💡 Recommendation: Do not bunk any lectures in at-risk subjects this week to stay clear of exam debarment.`;
+      } else {
+        report += `🏆 **Outstanding standing!** All ${allSubjects.length} courses are comfortably above your cutoff threshold. You hold safety buffers across your schedule while sustaining steady academic momentum.`;
+      }
+      return report;
+    }
+
+    // 6. Crisis / panic mode
+    if (/\b(debar|debarred|fail|failing|panic|terrified|anxious|ruined)\b/i.test(msg)) {
+      if (effectiveLang === 'hi') {
+        return `सुनो ${userName}, गहरी सांस लो। पैनिक करने की बिल्कुल जरूरत नहीं है, तुम्हारा शैक्षणिक करियर खराब नहीं होगा। हम दोनों मिलकर एक-एक कदम उठाएंगे। पहले उन विषयों पर फोकस करेंगे जहां अटेंडेंस कम है, और जरूरत पड़ने पर फैकल्टी से OD/मेडिकल लीव की बात करेंगे। मैं तुम्हारे साथ हूँ!`;
+      }
+      return `Take a slow, deep breath, ${userName}. I hear you, and you are not alone in this. Your academic trajectory is NOT ruined, and we have a concrete path forward. We will prioritize your highest-risk classes first, calculate exact recovery numbers, and leverage your approved OD/medical exemptions. We've got this step-by-step.`;
+    }
+
+    // 7. General Greetings & Twin Identity
+    if (/^(hi|hello|hey|yo|sup|hola|namaste|vanakkam|namaskara|good (morning|afternoon|evening))\b/i.test(msg) || /^(who are you|what can you do|introduce yourself|tell me about yourself)\b/i.test(msg)) {
+      if (effectiveLang === 'hi') {
+        return `नमस्ते ${userName}! मैं तुम्हारा AI डिजिटल ट्विन और एकेडमिक कंसल्टेंट हूँ। मैं तुम्हारी अटेंडेंस एनालिसिस, सेफ बंक्स, एग्जाम प्रिपरेशन, कोडिंग, डेटा स्ट्रक्चर्स और सभी टेक्निकल विषयों में मदद करने के लिए तैयार हूँ। बताओ आज क्या पढ़ना या प्लान करना है?`;
+      }
+      if (effectiveLang === 'kn') {
+        return `ನಮಸ್ಕಾರ ${userName}! ನಾನು ನಿನ್ನ AI ಡಿಜಿಟಲ್ ಟ್ವಿನ್ ಮತ್ತು ಅಕಾಡೆಮಿಕ್ ಕನ್ಸಲ್ಟೆಂಟ್. ಹಾಜರಾತಿ ಪ್ರಿಡಿಕ್ಷನ್, ಸೇಫ್ ಬಂಕ್ಸ್, ಎಕ್ಸಾಮ್ ಪ್ರಿಪರೇಷನ್ ಮತ್ತು ಕೋಡಿಂಗ್ ಪ್ರಶ್ನೆಗಳಿಗೆ ನಾನು ನಿನಗೆ ಸಹಾಯ ಮಾಡಬಲ್ಲೆ. ಇವತ್ತು ಏನು ಕಲಿಯೋಣ?`;
+      }
+      if (effectiveLang === 'te') {
+        return `నమస్కారం ${userName}! నేను నీ AI డిజిటల్ ట్విన్ మరియు అకడమిక్ కన్సల్టెంట్. హాజరు ప్రిడిక్షన్స్, సేఫ్ బంక్స్, ఎగ్జామ్ ప్రిపరేషన్ మరియు కోడింగ్ సబ్జెక్ట్స్ లో నీకు పూర్తి సాయం చేస్తాను. ఈరోజు ఏం చేద్దాం?`;
+      }
+      return `Hey ${userName}! I'm your AI Academic Twin & Engineering Consultant. I track your real-time course attendance, forecast safe bunks, calculate CIA/End-Sem grade targets, and assist you with coding, algorithms, and technical concepts. What are you working on right now?`;
+    }
+
+    // 8. Computer Science & Software Engineering Knowledge Engine
+    if (/\b(dynamic programming|dp|memoization|tabulation)\b/i.test(msg)) {
+      return `**Dynamic Programming (DP)** is an optimization strategy for problems with **Overlapping Subproblems** and **Optimal Substructure**.\n\n**Two Core Approaches:**\n1. **Top-Down (Memoization)**: Solve recursively and cache state outputs so repeated subproblems take $O(1)$ time (e.g., Fibonacci in $O(N)$ vs $O(2^N)$).\n2. **Bottom-Up (Tabulation)**: Build solutions iteratively from base cases up to the target state using a table/array.\n\n**Classic DP Problems:**\n• 0/1 Knapsack\n• Longest Common Subsequence (LCS)\n• Coin Change (Min coins & total combinations)\n• Edit Distance (Levenshtein)\n• Longest Increasing Subsequence (LIS)`;
+    }
+
+    if (/\b(recursion|recursive)\b/i.test(msg)) {
+      return `**Recursion** is an algorithmic technique where a function solves a problem by calling itself with smaller inputs.\n\n**Key Components:**\n1. **Base Case**: The termination condition that halts execution and prevents stack overflow.\n2. **Recursive Step**: The self-call that breaks down problem complexity toward the base case.\n\n⚠️ Every call pushes a frame onto the call stack ($O(N)$ space). For large $N$, consider tail call elimination or converting to an iterative approach.`;
+    }
+
+    if (/\b(linked list|array vs linked list|arrays? vs linked lists?)\b/i.test(msg)) {
+      return `**Arrays vs Linked Lists:**\n\n• **Memory**: Arrays use contiguous blocks; Linked Lists use discrete nodes with pointer overhead.\n• **Access**: Arrays have $O(1)$ constant-time random access by index; Linked Lists require $O(N)$ sequential traversal.\n• **Insertions/Deletions**: Linked Lists achieve $O(1)$ insertion at head/tail (if pointer exists); Arrays need $O(N)$ element shifts.\n• **Cache Locality**: Arrays exhibit high spatial cache locality; Linked Lists scatter in heap memory.`;
+    }
+
+    if (/\b(stack|queue)\b/i.test(msg) && !/attendance/i.test(msg)) {
+      return `**Stack vs Queue:**\n\n• **Stack (LIFO — Last In First Out)**: Push, Pop, Peek are all $O(1)$. Applications: function call stacks, undo operations, syntax parsing, DFS.\n• **Queue (FIFO — First In First Out)**: Enqueue, Dequeue, Front are all $O(1)$. Applications: CPU scheduling, printer spools, BFS traversal.`;
+    }
+
+    if (/\b(binary search tree|bst|tree traversal)\b/i.test(msg)) {
+      return `**Binary Search Tree (BST) & Traversals:**\n\n• **BST Invariant**: Left subtree values < Root value < Right subtree values.\n• **Time Complexity**: Average search/insert is $O(\\log N)$; skewed worst case is $O(N)$. Self-balancing trees (AVL / Red-Black) guarantee $O(\\log N)$.\n• **Traversals**:\n  - **In-Order** (Left, Root, Right): Returns keys in sorted ascending order.\n  - **Pre-Order** (Root, Left, Right): Useful for cloning or serializing trees.\n  - **Post-Order** (Left, Right, Root): Ideal for bottom-up node deletion.`;
+    }
+
+    if (/\b(graph|bfs|dfs|dijkstra)\b/i.test(msg)) {
+      return `**Graph Algorithms Summary:**\n\n• **BFS (Breadth-First Search)**: Uses a Queue. Level-order traversal that finds the unweighted shortest path in $O(V + E)$ time.\n• **DFS (Depth-First Search)**: Uses a Stack (or recursion). Explores branches fully before backtracking. Solves cycle detection and topological sorting in $O(V + E)$.\n• **Dijkstra's Algorithm**: Greedy algorithm using a Min-Heap. Computes single-source shortest path for non-negative weights in $O((V + E) \\log V)$.`;
+    }
+
+    if (/\b(sorting|sort algorithm|merge sort|quick sort)\b/i.test(msg)) {
+      return `**Core Sorting Algorithms:**\n\n1. **Merge Sort**: Stable, Divide-and-Conquer, guaranteed $O(N \\log N)$ time, $O(N)$ auxiliary space.\n2. **Quick Sort**: Partition around pivot, average $O(N \\log N)$, worst-case $O(N^2)$ (avoidable with randomized pivots), $O(\\log N)$ recursion stack.\n3. **Heap Sort**: In-place $O(1)$ extra memory, guaranteed $O(N \\log N)$, but not stable.`;
+    }
+
+    if (/\b(big o|time complexity|space complexity)\b/i.test(msg)) {
+      return `**Big-O Notation Hierarchy:**\n\n• $O(1)$ — Constant (direct hash map lookup, array indexing)\n• $O(\\log N)$ — Logarithmic (binary search, divide & conquer halving)\n• $O(N)$ — Linear (single scan over an array of size $N$)\n• $O(N \\log N)$ — Linearithmic (optimal comparison sorting: Merge Sort, Heap Sort)\n• $O(N^2)$ — Quadratic (nested loops: Bubble Sort, Matrix addition)\n• $O(2^N)$ — Exponential (power set generation, naive recursive Fibonacci)\n• $O(N!)$ — Factorial (generating all permutations)`;
+    }
+
+    if (/\b(oop|object oriented|pillars of oop|polymorphism|encapsulation|inheritance|abstraction)\b/i.test(msg)) {
+      return `**The 4 Pillars of OOP:**\n\n1. **Encapsulation**: Bundles data and functions together while restricting direct access to internal state using private/protected modifiers.\n2. **Abstraction**: Exposes clean interfaces while hiding implementation complexity (e.g. interfaces, abstract base classes).\n3. **Inheritance**: Enables class reuse by deriving child classes from parent classes (code reusability).\n4. **Polymorphism**: Allows uniform interfaces for differing underlying forms—via compile-time overloading or runtime overriding.`;
+    }
+
+    if (/\b(sql vs nosql|acid|database|db)\b/i.test(msg) && !/attendance/i.test(msg)) {
+      return `**Database Paradigms:**\n\n• **SQL (Relational)**: Fixed schema, ACID transactions, relational foreign keys (PostgreSQL, MySQL). Best for structured financial or ERP models.\n• **NoSQL**: Schema-flexible, horizontally scalable, BASE consistency (MongoDB, Redis, Cassandra). Best for high-throughput, unstructured feeds.\n• **ACID Guarantees**: Atomicity (all-or-nothing), Consistency (state rules preserved), Isolation (independent concurrent transactions), Durability (persisted on disk).`;
+    }
+
+    // 9. Study Methods & Productivity
+    if (/\b(how to study|study tips|exam prep|preparation tips|concentrate|focus)\b/i.test(msg)) {
+      return `**Top Study & Revision Strategies for ${userName}:**\n\n1. **Active Recall**: Test yourself with practice questions rather than passively re-reading notes.\n2. **Spaced Repetition**: Review material across widening intervals (1 day, 3 days, 1 week) to beat the forgetting curve.\n3. **Feynman Technique**: Explain complex engineering principles as if teaching a beginner. Any point where you hesitate is a concept to re-learn.\n4. **Pomodoro Technique**: 50 minutes of deep study followed by 10 minutes away from screens.`;
+    }
+
+    // Default friendly academic response
+    if (effectiveLang === 'hi') {
+      return `नमस्ते ${userName}! मैं तुम्हारा AI डिजिटल ट्विन हूँ। **${matchedSubject.name}** में तुम्हारी अटेंडेंस **${effPct.toFixed(1)}%** (${att}/${cond}) है, सेफ बंक्स: **${safeBunks}**। बताओ आज क्या प्लान करना है—अटेंडेंस, बंक, या पढ़ाई?`;
+    }
+    if (effectiveLang === 'kn') {
+      return `ನಮಸ್ಕಾರ ${userName}! ನಾನು ನಿನ್ನ AI ಡಿಜಿಟಲ್ ಟ್ವಿನ್. **${matchedSubject.name}** ನಲ್ಲಿ ಹಾಜರಾತಿ **${effPct.toFixed(1)}%**, ಸುರಕ್ಷಿತ ಬಂಕ್: **${safeBunks}**. ಇವತ್ತು ಏನು ಪ್ಲಾನ್ ಮಾಡೋಣ?`;
+    }
+    if (effectiveLang === 'te') {
+      return `నమస్కారం ${userName}! నేను నీ AI డిజిటల్ ట్విన్. **${matchedSubject.name}** లో హాజరు **${effPct.toFixed(1)}%**, సేఫ్ బంక్స్: **${safeBunks}**. ఈరోజు ఏం ప్లాన్ చేద్దాం?`;
+    }
+    return `Hey ${userName}! I'm your AI Academic Twin. Currently tracking **${matchedSubject.name}** at **${effPct.toFixed(1)}%** attendance (${att}/${cond} classes, **${safeBunks} safe bunks**). How can I assist you right now—attendance forecasting, safe bunks math, or exam prep?`;
+  };
+
   const handleSendChat = async (directMsg?: string, source: 'chat' | 'video' = 'chat') => {
     // Fast-click protection
     if (source === 'chat' && isChatLoading) return;
@@ -2661,10 +2988,9 @@ export default function Dashboard() {
       has_direct_msg: Boolean(directMsg)
     });
 
-    if (!directMsg) {
-      if (source === 'chat') setChatInput('');
-      else setVideoInput('');
-    }
+    // Clear input fields immediately
+    setChatInput('');
+    setVideoInput('');
 
     if (source === 'chat') setIsChatLoading(true);
     else setIsVideoLoading(true);
@@ -2677,7 +3003,7 @@ export default function Dashboard() {
 
     // If query asks to look/see or if user is in video call and camera is active, grab live video frame
     let frameData: string | null = null;
-    const isVisionQuery = /look|see|face|expression|video|camera|tired|showing|holding|read|board|posture|shirt|room|desk/i.test(userMsg);
+    const isVisionQuery = /\b(look at (?:this|me|my)|see this|what is this|read this|check my posture|how do i look|can you see me|my expression|my shirt|my desk|my board)\b/i.test(userMsg);
     if ((source === 'video' || videoCallOpen || isVisionQuery) && isCameraActive) {
       frameData = captureUserVideoFrame();
     }
@@ -2692,7 +3018,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: userMsg,
-          user_name: user?.firstName || 'Amay',
+          user_name: user?.firstName || 'Anonymous',
           language: voiceLanguageRef.current,
           image_data: frameData,
           subject_name: matchedSubject.name,
@@ -2749,21 +3075,38 @@ export default function Dashboard() {
           speak(data.response);
         }
       } else {
-        const errorMsg = "I'm having a little trouble syncing with our server right now, but I'm still right here with you! Let's give it another shot.";
+        // High fidelity intelligent client-side twin engine fallback
+        const fallback = generateClientSideTwinResponse({
+          userMsg,
+          matchedSubject,
+          allSubjects: subjects,
+          user,
+          language: voiceLanguageRef.current,
+          detectedEmotion: detectedEmotionRef.current,
+          isCameraActive
+        });
         setter(prev => {
           const base = prev.filter(m => m.content !== 'Thinking...');
-          return [...base, { role: 'msg-ai', content: errorMsg }];
+          return [...base, { role: 'msg-ai', content: fallback }];
         });
-        if (source === 'video') speak(errorMsg);
+        if (source === 'video' || videoCallOpen) speak(fallback);
       }
     } catch (error) {
-      console.error('Chat error:', error);
-      const offlineMsg = "Our local link hiccuped for a second! Check that the backend server is running and try again—we've got this.";
+      console.warn('Network link unavailable, using intelligent local twin engine:', error);
+      const fallback = generateClientSideTwinResponse({
+        userMsg,
+        matchedSubject,
+        allSubjects: subjects,
+        user,
+        language: voiceLanguageRef.current,
+        detectedEmotion: detectedEmotionRef.current,
+        isCameraActive
+      });
       setter(prev => {
         const base = prev.filter(m => m.content !== 'Thinking...');
-        return [...base, { role: 'msg-ai', content: offlineMsg }];
+        return [...base, { role: 'msg-ai', content: fallback }];
       });
-      if (source === 'video') speak(offlineMsg);
+      if (source === 'video' || videoCallOpen) speak(fallback);
     } finally {
       if (source === 'chat') setIsChatLoading(false);
       else setIsVideoLoading(false);
@@ -2864,6 +3207,17 @@ export default function Dashboard() {
     if (storedUser) {
       try {
         currentUser = JSON.parse(storedUser);
+        if (currentUser && (currentUser.fullName?.includes('Amay') || currentUser.firstName?.includes('Amay'))) {
+          currentUser = {
+            ...currentUser,
+            firstName: 'Anonymous',
+            fullName: 'Anonymous Student',
+            email: currentUser.email?.includes('amay') ? 'student@gmail.com' : currentUser.email,
+          };
+          try {
+            localStorage.setItem('digital_twin_user', JSON.stringify(currentUser));
+          } catch {}
+        }
         setUser(currentUser);
         // If stored user has not completed student profile (name, college, age), prompt immediately
         if (!currentUser?.profileCompleted || !currentUser?.college || !currentUser?.fullName) {
@@ -3171,9 +3525,9 @@ export default function Dashboard() {
     setAuthError(null);
     setTimeout(() => {
       const fbUser: UserProfile = {
-        firstName: "Amay",
-        fullName: "Amay Vikram Singh",
-        email: "amay.singh@facebook.com",
+        firstName: "Anonymous",
+        fullName: "Anonymous Student",
+        email: "student@facebook.com",
         authProvider: "facebook"
       };
       loginUser(fbUser);
@@ -3186,9 +3540,9 @@ export default function Dashboard() {
     setAuthError(null);
     setTimeout(() => {
       const gUser: UserProfile = {
-        firstName: "Amay",
-        fullName: "Amay Vikram Singh",
-        email: "amay.singh@gmail.com",
+        firstName: "Anonymous",
+        fullName: "Anonymous Student",
+        email: "student@gmail.com",
         authProvider: "google"
       };
       loginUser(gUser);
@@ -3261,7 +3615,7 @@ export default function Dashboard() {
       return;
     }
     const phoneUser: UserProfile = {
-      firstName: "Amay",
+      firstName: "Anonymous",
       phone: `${phoneCountry} ${phoneNumber.trim()}`,
       authProvider: "phone"
     };
@@ -3793,6 +4147,55 @@ export default function Dashboard() {
         )}
 
         <div className="nav-actions">
+          {/* Overall Attendance Safety Quick Gauge */}
+          <div
+            className="nav-stat-pill"
+            onClick={() => {
+              if (isMandatoryProfileSetup) {
+                setShowEditProfileModal(true);
+                return;
+              }
+              setActivePage('analytics');
+            }}
+            title={`Overall Academic Attendance: ${overallAttendancePct.toFixed(1)}% across ${subjects.length} subjects. Click to view detailed predictive breakdown.`}
+          >
+            <i
+              className={`fa-solid ${overallAttendancePct >= 75 ? 'fa-shield-halved' : 'fa-triangle-exclamation'}`}
+              style={{ color: overallAttendancePct >= 75 ? 'var(--status-success)' : 'var(--status-danger)' }}
+            ></i>
+            <span className="nav-stat-label">Overall</span>
+            <span className="nav-stat-value">{overallAttendancePct.toFixed(1)}%</span>
+            <span className={`nav-stat-badge ${overallAttendancePct >= 75 ? 'safe' : 'risk'}`}>
+              {overallAttendancePct >= 75 ? 'Safe' : 'At Risk'}
+            </span>
+          </div>
+
+          {/* Quick Voice Language Switcher Pill */}
+          <button
+            type="button"
+            className="nav-lang-pill"
+            onClick={() => {
+              const langs: SupportedLanguage[] = ['auto', 'hi', 'en', 'kn', 'te'];
+              const nextIdx = (langs.indexOf(voiceLanguage) + 1) % langs.length;
+              changeLanguagePreference(langs[nextIdx]);
+            }}
+            title={`Spoken Voice Language: ${
+              voiceLanguage === 'auto' ? 'Auto-Detect' : 
+              voiceLanguage === 'hi' ? 'Hindi (हिन्दी)' : 
+              voiceLanguage === 'en' ? 'English' : 
+              voiceLanguage === 'kn' ? 'Kannada (ಕನ್ನಡ)' : 'Telugu (తెలుగు)'
+            }. Click to cycle language.`}
+            aria-label="Cycle Language"
+          >
+            <i className="fa-solid fa-globe"></i>
+            <span>
+              {voiceLanguage === 'auto' ? 'Auto' : 
+               voiceLanguage === 'hi' ? 'हिन्दी' : 
+               voiceLanguage === 'en' ? 'EN' : 
+               voiceLanguage === 'kn' ? 'ಕನ್ನಡ' : 'తెలుగు'}
+            </span>
+          </button>
+
           {/* Cloud Database Persistence Status (SQLite Sync) */}
           <div
             className={`cloud-sync-pill ${isCloudSyncing ? '' : 'synced'}`}
@@ -3802,46 +4205,7 @@ export default function Dashboard() {
             <span>{isCloudSyncing ? 'Syncing...' : 'Cloud Synced'}</span>
           </div>
 
-          {/* AI Chat Bot Quick Trigger */}
-          <button
-            className={`btn-icon ${chatOpen ? 'active' : ''}`}
-            style={{
-              color: chatOpen ? "var(--accent-cyan)" : "var(--text-secondary)",
-              background: chatOpen ? "rgba(6, 182, 212, 0.15)" : undefined,
-              borderColor: chatOpen ? "var(--accent-cyan)" : undefined
-            }}
-            onClick={() => {
-              if (isMandatoryProfileSetup) {
-                setShowEditProfileModal(true);
-                return;
-              }
-              setChatOpen(!chatOpen);
-            }}
-            title={chatOpen ? "Close AI Chat Bot" : "Open AI Chat Bot"}
-            aria-label={chatOpen ? "Close AI Chat Bot" : "Open AI Chat Bot"}
-          >
-            <i className="fa-solid fa-robot"></i>
-          </button>
-          {/* AI Consultant Live Quick Trigger */}
-          <button
-            className={`btn-icon ${videoCallOpen ? 'active' : ''}`}
-            style={{
-              color: videoCallOpen ? "var(--status-success)" : "var(--accent-primary)",
-              background: videoCallOpen ? "rgba(16, 185, 129, 0.15)" : undefined,
-              borderColor: videoCallOpen ? "var(--status-success)" : undefined
-            }}
-            onClick={() => {
-              if (isMandatoryProfileSetup) {
-                setShowEditProfileModal(true);
-                return;
-              }
-              toggleVideoCall();
-            }}
-            title={videoCallOpen ? "In Video Call (Active)" : "Launch Live AI Consultant"}
-            aria-label={videoCallOpen ? "In Video Call (Active)" : "Launch Live AI Consultant"}
-          >
-            <i className="fa-solid fa-headset"></i>
-          </button>
+          {/* Theme Toggle */}
           <button className="btn-icon" onClick={toggleTheme} title="Toggle Theme" aria-label="Toggle Theme">
             <i className={`fa-solid ${isLightMode ? 'fa-moon' : 'fa-sun'}`}></i>
           </button>
@@ -3869,10 +4233,16 @@ export default function Dashboard() {
               )}
             </div>
             <div style={{ display: "flex", flexDirection: "column" }} className="user-profile-meta">
-              <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.2 }}>
+              <span 
+                style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.2 }}
+                title={user?.fullName || user?.firstName}
+              >
                 {user?.fullName || user?.firstName}
               </span>
-              <span style={{ fontSize: "0.68rem", color: "var(--accent-cyan)", fontWeight: 600 }}>
+              <span 
+                style={{ fontSize: "0.68rem", color: "var(--accent-cyan)", fontWeight: 600 }}
+                title={user?.college ? user.college : (user?.authProvider ? `${user.authProvider} access` : 'Student')}
+              >
                 {user?.college ? user.college : (user?.authProvider ? `${user.authProvider} access` : 'Student')}
               </span>
             </div>
@@ -3884,20 +4254,20 @@ export default function Dashboard() {
                 setEditProfileAge(String(user?.age || '20'));
                 setShowEditProfileModal(true);
               }}
-              style={{ width: "36px", height: "36px", minWidth: "36px", minHeight: "36px", color: "var(--accent-cyan)" }}
+              style={{ width: "30px", height: "30px", minWidth: "30px", minHeight: "30px", color: "var(--accent-cyan)" }}
               title="Edit Student Profile (Name, College, Age)"
               aria-label="Edit Student Profile"
             >
-              <i className="fa-solid fa-user-pen"></i>
+              <i className="fa-solid fa-user-pen" style={{ fontSize: "0.75rem" }}></i>
             </button>
             <button
               className="btn-icon"
               onClick={handleLogout}
-              style={{ width: "36px", height: "36px", minWidth: "36px", minHeight: "36px", color: "var(--text-muted)" }}
+              style={{ width: "30px", height: "30px", minWidth: "30px", minHeight: "30px", color: "var(--text-muted)" }}
               title="Log Out"
               aria-label="Log Out"
             >
-              <i className="fa-solid fa-right-from-bracket"></i>
+              <i className="fa-solid fa-right-from-bracket" style={{ fontSize: "0.75rem" }}></i>
             </button>
           </div>
         </div>
@@ -5461,8 +5831,26 @@ export default function Dashboard() {
                 ></span>
               </h4>
             </div>
-            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0 }}>
+            <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexShrink: 0 }}>
               <button
+                type="button"
+                className="btn-icon"
+                style={{ width: "28px", height: "28px", color: "var(--text-muted)" }}
+                onClick={() => {
+                  if (window.confirm("Clear all chat messages?")) {
+                    setMessages([{
+                      role: "msg-ai",
+                      content: `Hello ${user?.firstName || 'Student'}! How can I help you today? Ask about your attendance, bunk calculations, or exam preparations!`
+                    }]);
+                  }
+                }}
+                title="Clear Chat History"
+                aria-label="Clear Chat History"
+              >
+                <i className="fa-solid fa-trash-can"></i>
+              </button>
+              <button
+                type="button"
                 className="btn-icon"
                 style={{ width: "28px", height: "28px", color: "var(--accent-cyan)" }}
                 onClick={() => {
@@ -5470,14 +5858,17 @@ export default function Dashboard() {
                   toggleVideoCall();
                 }}
                 title="Switch to AI Consultant Live"
+                aria-label="Switch to AI Consultant Live"
               >
                 <i className="fa-solid fa-headset"></i>
               </button>
               <button
+                type="button"
                 className="btn-icon"
                 style={{ width: "28px", height: "28px" }}
                 onClick={() => setChatOpen(false)}
                 title="Minimize Chat"
+                aria-label="Minimize Chat"
               >
                 <i className="fa-solid fa-xmark"></i>
               </button>
@@ -5558,7 +5949,45 @@ export default function Dashboard() {
                     <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: "0.75rem", color: "var(--accent-cyan)" }}></i>
                   </div>
                 ) : (
-                  msg.content
+                  <div>
+                    <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{msg.content}</div>
+                    {msg.role === 'msg-ai' && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginTop: "0.4rem", paddingTop: "0.3rem", borderTop: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isSpeaking) {
+                              interruptSpeech();
+                            } else {
+                              speak(msg.content);
+                            }
+                          }}
+                          className="btn-icon"
+                          style={{ width: "22px", height: "22px", fontSize: "0.72rem", color: isSpeaking ? "var(--accent-cyan)" : "var(--text-muted)" }}
+                          title={isSpeaking ? "Stop Voice Readout" : "Listen to Message (Voice Readout)"}
+                          aria-label={isSpeaking ? "Stop Voice Readout" : "Listen to Message"}
+                        >
+                          <i className={`fa-solid ${isSpeaking ? 'fa-volume-xmark' : 'fa-volume-high'}`}></i>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (navigator?.clipboard?.writeText) {
+                              navigator.clipboard.writeText(msg.content);
+                              setCopiedMsgIndex(i);
+                              setTimeout(() => setCopiedMsgIndex(null), 2000);
+                            }
+                          }}
+                          className="btn-icon"
+                          style={{ width: "22px", height: "22px", fontSize: "0.72rem", color: copiedMsgIndex === i ? "var(--status-success)" : "var(--text-muted)" }}
+                          title={copiedMsgIndex === i ? "Copied to Clipboard!" : "Copy Message to Clipboard"}
+                          aria-label={copiedMsgIndex === i ? "Copied" : "Copy Message"}
+                        >
+                          <i className={`fa-solid ${copiedMsgIndex === i ? 'fa-check' : 'fa-copy'}`}></i>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             ))}
@@ -5615,7 +6044,7 @@ export default function Dashboard() {
             />
             <input
               type="text"
-              placeholder="Ask me anything..."
+              placeholder={isMicActive && !videoCallOpen ? "🎙️ Listening... Speak now..." : "Ask me anything..."}
               value={chatInput}
               disabled={isChatLoading}
               maxLength={1000}
@@ -5629,6 +6058,33 @@ export default function Dashboard() {
                 {chatInput.length}/1000
               </span>
             )}
+            {/* Voice Dictation Mic Button */}
+            <button
+              type="button"
+              className={`btn-icon ${isMicActive && !videoCallOpen ? 'active pulse-mic' : ''}`}
+              style={{
+                width: "38px",
+                height: "38px",
+                minWidth: "38px",
+                minHeight: "38px",
+                borderRadius: "50%",
+                color: isMicActive && !videoCallOpen ? "var(--status-danger)" : "var(--accent-cyan)",
+                background: isMicActive && !videoCallOpen ? "rgba(239, 68, 68, 0.15)" : "var(--bg-surface)",
+                border: isMicActive && !videoCallOpen ? "1px solid var(--status-danger)" : "1px solid var(--border-color)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: !voiceSupported ? "not-allowed" : "pointer",
+                flexShrink: 0,
+                transition: "all 0.2s ease"
+              }}
+              onClick={toggleMic}
+              disabled={!voiceSupported}
+              title={!voiceSupported ? "Speech recognition not supported in browser" : isMicActive && !videoCallOpen ? "Microphone Active (Listening...) - Click to Mute" : "Voice Dictation (Speak to AI)"}
+              aria-label={isMicActive && !videoCallOpen ? "Stop Voice Input" : "Start Voice Input"}
+            >
+              <i className={`fa-solid ${isMicActive && !videoCallOpen ? 'fa-microphone-lines' : 'fa-microphone'}`}></i>
+            </button>
             <button
               className="chat-send-btn"
               style={{
@@ -5867,6 +6323,11 @@ export default function Dashboard() {
                       <i className="fa-solid fa-eye fa-spin"></i> Vision Scanning...
                     </span>
                   )}
+                  {isAudioMuted && (
+                    <span style={{ fontSize: "0.75rem", color: "var(--status-danger)", display: "flex", alignItems: "center", gap: "0.3rem", borderLeft: "1px solid var(--border-color)", paddingLeft: "0.5rem" }}>
+                      <i className="fa-solid fa-volume-xmark"></i> Audio Muted
+                    </span>
+                  )}
                 </div>
 
                 {/* AI Avatar Center Stage */}
@@ -6019,7 +6480,43 @@ export default function Dashboard() {
                 <div style={{ flex: 1, padding: "1rem", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                   {videoMessages.map((msg, i) => (
                     <div key={i} className={`msg-bubble ${msg.role}`} style={{ maxWidth: "100%", fontSize: "0.875rem" }}>
-                      {msg.content}
+                      <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{msg.content}</div>
+                      {msg.role === 'msg-ai' && (
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginTop: "0.35rem", paddingTop: "0.25rem", borderTop: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isSpeaking) {
+                                interruptSpeech();
+                              } else {
+                                speak(msg.content);
+                              }
+                            }}
+                            className="btn-icon"
+                            style={{ width: "20px", height: "20px", fontSize: "0.68rem", color: isSpeaking ? "var(--accent-cyan)" : "var(--text-muted)" }}
+                            title={isSpeaking ? "Stop Voice Readout" : "Listen to Response"}
+                            aria-label={isSpeaking ? "Stop Voice Readout" : "Listen to Response"}
+                          >
+                            <i className={`fa-solid ${isSpeaking ? 'fa-volume-xmark' : 'fa-volume-high'}`}></i>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (navigator?.clipboard?.writeText) {
+                                navigator.clipboard.writeText(msg.content);
+                                setCopiedMsgIndex(1000 + i);
+                                setTimeout(() => setCopiedMsgIndex(null), 2000);
+                              }
+                            }}
+                            className="btn-icon"
+                            style={{ width: "20px", height: "20px", fontSize: "0.68rem", color: copiedMsgIndex === 1000 + i ? "var(--status-success)" : "var(--text-muted)" }}
+                            title={copiedMsgIndex === 1000 + i ? "Copied!" : "Copy"}
+                            aria-label={copiedMsgIndex === 1000 + i ? "Copied" : "Copy"}
+                          >
+                            <i className={`fa-solid ${copiedMsgIndex === 1000 + i ? 'fa-check' : 'fa-copy'}`}></i>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                   <div ref={videoChatEndRef} />
@@ -6173,11 +6670,27 @@ export default function Dashboard() {
               )}
               <button
                 className="btn-control"
-                onClick={() => speak("I am your AI Digital Twin, reading and analyzing your video in real time.")}
-                title="Voice Test"
-                aria-label="Voice Test"
+                onClick={toggleAudioMute}
+                title={isAudioMuted ? "Unmute AI Voice Audio" : "Mute AI Voice Audio"}
+                aria-label={isAudioMuted ? "Unmute AI Voice Audio" : "Mute AI Voice Audio"}
+                style={{
+                  color: isAudioMuted ? "var(--status-danger)" : undefined,
+                  borderColor: isAudioMuted ? "var(--status-danger)" : undefined
+                }}
               >
-                <i className="fa-solid fa-volume-high"></i>
+                <i className={`fa-solid ${isAudioMuted ? 'fa-volume-xmark' : 'fa-volume-high'}`}></i>
+              </button>
+              <button
+                className="btn-control"
+                onClick={() => setIsFaceMeshActive(!isFaceMeshActive)}
+                title={isFaceMeshActive ? "Face Telemetry Active (Click to Pause)" : "Face Telemetry Paused (Click to Resume)"}
+                aria-label="Toggle Face Telemetry"
+                style={{
+                  color: isFaceMeshActive ? "var(--accent-cyan)" : "var(--text-muted)",
+                  borderColor: isFaceMeshActive ? "var(--accent-cyan)" : undefined
+                }}
+              >
+                <i className={`fa-solid ${isFaceMeshLoading ? 'fa-spinner fa-spin' : isFaceMeshActive ? 'fa-id-badge' : 'fa-user-slash'}`}></i>
               </button>
               <button
                 className="btn-control"
